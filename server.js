@@ -27,6 +27,7 @@ const ALLOWED_EXTENSIONS = [
 // uploads/ فقط پوشه فایل موقت است؛ فایل نهایی هرگز اینجا نگه داشته نمی‌شود.
 const TMP_DIR = path.join(__dirname, 'uploads');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const SCHEMA_NAME = 'karen_store';
 
 fs.mkdirSync(TMP_DIR, { recursive: true });
 
@@ -63,21 +64,22 @@ const pool = new Pool({
 pool.on('error', (err) => console.error('PostgreSQL pool error:', err.message));
 
 const SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS users (
+  `CREATE SCHEMA IF NOT EXISTS ${SCHEMA_NAME}`,
+  `CREATE TABLE IF NOT EXISTS karen_store.users (
      id SERIAL PRIMARY KEY,
      username VARCHAR(32) NOT NULL,
      password_hash TEXT NOT NULL,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
    )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`,
-  `CREATE TABLE IF NOT EXISTS sessions (
+  `CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON karen_store.users (LOWER(username))`,
+  `CREATE TABLE IF NOT EXISTS karen_store.sessions (
      id SERIAL PRIMARY KEY,
-     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     user_id INTEGER NOT NULL REFERENCES karen_store.users(id) ON DELETE CASCADE,
      token_hash VARCHAR(64) NOT NULL UNIQUE,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      expires_at TIMESTAMPTZ NOT NULL
    )`,
-  `CREATE TABLE IF NOT EXISTS games (
+  `CREATE TABLE IF NOT EXISTS karen_store.games (
      id SERIAL PRIMARY KEY,
      title VARCHAR(120) NOT NULL,
      description TEXT NOT NULL DEFAULT '',
@@ -89,11 +91,11 @@ const SCHEMA_STATEMENTS = [
      storage_path VARCHAR(255) NOT NULL,
      file_size BIGINT NOT NULL,
      downloads INTEGER NOT NULL DEFAULT 0,
-     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     user_id INTEGER NOT NULL REFERENCES karen_store.users(id) ON DELETE CASCADE,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
    )`,
-  `CREATE INDEX IF NOT EXISTS games_user_id_idx ON games (user_id)`,
-  `CREATE INDEX IF NOT EXISTS games_created_at_idx ON games (created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS games_user_id_idx ON karen_store.games (user_id)`,
+  `CREATE INDEX IF NOT EXISTS games_created_at_idx ON karen_store.games (created_at DESC)`,
 ];
 
 // وضعیت ساخت جدول‌ها؛ در /api/health نمایش داده می‌شود تا علت خطا دیده شود.
@@ -231,8 +233,8 @@ const GAME_SELECT = `
   SELECT g.id, g.title, g.description, g.version, g.category, g.developer,
          g.filename, g.file_size, g.downloads,
          g.user_id AS owner_id, u.username AS owner, g.created_at
-  FROM games g
-  JOIN users u ON u.id = g.user_id`;
+  FROM karen_store.games g
+  JOIN karen_store.users u ON u.id = g.user_id`;
 
 function toGame(row) {
   return { ...row, file_size: Number(row.file_size) };
@@ -252,8 +254,8 @@ async function requireAuth(req, res, next) {
   if (!token) throw new HttpError(401, 'برای این کار باید وارد شوید.');
   const { rows } = await pool.query(
     `SELECT u.id, u.username
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
+       FROM karen_store.sessions s
+       JOIN karen_store.users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > NOW()`,
     [hashToken(token)],
   );
@@ -359,7 +361,7 @@ app.post('/api/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   try {
     const { rows } = await pool.query(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at',
+      'INSERT INTO karen_store.users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at',
       [username, passwordHash],
     );
     res.status(201).json({ ok: true, user: rows[0] });
@@ -376,7 +378,7 @@ app.post('/api/login', async (req, res) => {
     throw new HttpError(400, 'نام کاربری و رمز عبور را وارد کنید.');
   }
   const { rows } = await pool.query(
-    'SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER($1)',
+    'SELECT id, username, password_hash FROM karen_store.users WHERE LOWER(username) = LOWER($1)',
     [body.username.trim()],
   );
   const user = rows[0];
@@ -386,9 +388,9 @@ app.post('/api/login', async (req, res) => {
 
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-  await pool.query('DELETE FROM sessions WHERE expires_at < NOW()');
+  await pool.query('DELETE FROM karen_store.sessions WHERE expires_at < NOW()');
   await pool.query(
-    'INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+    'INSERT INTO karen_store.sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
     [user.id, hashToken(token), expiresAt],
   );
   res.json({
@@ -401,7 +403,7 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', async (req, res) => {
   const token = getBearerToken(req);
   if (token) {
-    await pool.query('DELETE FROM sessions WHERE token_hash = $1', [hashToken(token)]);
+    await pool.query('DELETE FROM karen_store.sessions WHERE token_hash = $1', [hashToken(token)]);
   }
   res.json({ ok: true });
 });
@@ -459,7 +461,7 @@ app.post('/api/games', requireAuth, handleUpload, async (req, res) => {
     let gameId;
     try {
       const { rows } = await pool.query(
-        `INSERT INTO games
+        `INSERT INTO karen_store.games
            (title, description, version, category, developer, filename,
             stored_filename, storage_path, file_size, user_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -488,7 +490,7 @@ app.post('/api/games', requireAuth, handleUpload, async (req, res) => {
 app.get('/api/games/:id/download', async (req, res) => {
   const id = parseId(req.params.id);
   const { rows } = await pool.query(
-    'SELECT id, filename, file_size, storage_path FROM games WHERE id = $1',
+    'SELECT id, filename, file_size, storage_path FROM karen_store.games WHERE id = $1',
     [id],
   );
   const game = rows[0];
@@ -497,7 +499,7 @@ app.get('/api/games/:id/download', async (req, res) => {
   // اگر فایل در Storage نباشد، خطا قبل از افزایش شمارنده برمی‌گردد.
   const upstream = await storage.getGameFile(game.storage_path);
 
-  await pool.query('UPDATE games SET downloads = downloads + 1 WHERE id = $1', [id]);
+  await pool.query('UPDATE karen_store.games SET downloads = downloads + 1 WHERE id = $1', [id]);
 
   res.status(200);
   res.setHeader('Content-Type', 'application/octet-stream');
@@ -520,7 +522,7 @@ app.get('/api/games/:id/download', async (req, res) => {
 app.delete('/api/games/:id', requireAuth, async (req, res) => {
   const id = parseId(req.params.id);
   const { rows } = await pool.query(
-    'SELECT id, user_id, storage_path FROM games WHERE id = $1',
+    'SELECT id, user_id, storage_path FROM karen_store.games WHERE id = $1',
     [id],
   );
   const game = rows[0];
@@ -533,7 +535,7 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
   await storage.deleteGameFile(game.storage_path);
 
   try {
-    await pool.query('DELETE FROM games WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    await pool.query('DELETE FROM karen_store.games WHERE id = $1 AND user_id = $2', [id, req.user.id]);
   } catch (err) {
     console.error('حذف رکورد بازی ناموفق:', err.message);
     throw new HttpError(500, 'فایل حذف شد اما رکورد بازی حذف نشد. دوباره تلاش کنید.');
