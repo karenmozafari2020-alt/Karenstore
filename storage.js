@@ -29,14 +29,19 @@ class StorageError extends Error {
   }
 }
 
-function misconfigured(detail) {
+function misconfigured(detail, missing = []) {
   console.error(`Storage configuration error: ${detail}`);
-  return new StorageError('سرویس ذخیره‌سازی فایل تنظیم نشده است.', 503);
+  const hint = missing.length ? ` متغیرهای ناقص: ${missing.join(', ')}` : '';
+  return new StorageError(`سرویس ذخیره‌سازی فایل تنظیم نشده است.${hint}`, 503);
+}
+
+function missingVars(names) {
+  return names.filter((n) => (process.env[n] || '').trim() === '');
 }
 
 function activeProvider() {
   if (!SUPPORTED_PROVIDERS.includes(PROVIDER)) {
-    throw misconfigured(`STORAGE_PROVIDER "${PROVIDER}" is not supported`);
+    throw misconfigured(`STORAGE_PROVIDER "${PROVIDER}" is not supported`, ['STORAGE_PROVIDER (باید supabase یا s3 باشد)']);
   }
   return PROVIDER;
 }
@@ -63,7 +68,10 @@ function supabaseConfig() {
   const url = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
   const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   const bucket = (process.env.SUPABASE_STORAGE_BUCKET || 'karen-games').trim();
-  if (!url || !key) throw misconfigured('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing');
+  if (!url || !key) {
+    throw misconfigured('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing',
+      missingVars(['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']));
+  }
   return { url, key, bucket };
 }
 
@@ -132,7 +140,8 @@ function s3Config() {
   const accessKeyId = (process.env.S3_ACCESS_KEY_ID || '').trim();
   const secretAccessKey = (process.env.S3_SECRET_ACCESS_KEY || '').trim();
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
-    throw misconfigured('S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID or S3_SECRET_ACCESS_KEY is missing');
+    throw misconfigured('S3 variables are missing',
+      missingVars(['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']));
   }
   return { endpoint, region, bucket, accessKeyId, secretAccessKey };
 }
