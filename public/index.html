@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Karen Store</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="logo" href="/">
+        <span class="logo-mark">K</span>
+        <span class="logo-text">Karen Store</span>
+      </a>
+
+      <div class="auth-area">
+        <div id="guestArea" class="auth-group">
+          <button id="loginOpenBtn" class="btn btn-ghost" type="button">ورود</button>
+          <button id="registerOpenBtn" class="btn btn-primary" type="button">ثبت‌نام</button>
+        </div>
+        <div id="userArea" class="auth-group" hidden>
+          <span class="greeting">سلام، <strong id="greetingName"></strong></span>
+          <button id="uploadOpenBtn" class="btn btn-primary" type="button">آپلود بازی</button>
+          <button id="logoutBtn" class="btn btn-ghost" type="button">خروج</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h1>بازی‌هایت را منتشر کن، بازی‌های دیگران را دانلود کن</h1>
+      <p>فروشگاه مستقل Karen Store. بدون شماره تلفن؛ فقط با نام کاربری و رمز عبور.</p>
+      <div class="search-box">
+        <input id="searchInput" type="search" maxlength="100" placeholder="جستجو در نام بازی، توضیحات یا سازنده..." autocomplete="off">
+      </div>
+    </section>
+
+    <nav id="categoryNav" class="categories" aria-label="دسته‌بندی‌ها"></nav>
+
+    <div class="list-head">
+      <h2>بازی‌ها</h2>
+      <span id="statusText" class="status"></span>
+    </div>
+
+    <section id="gamesGrid" class="grid" aria-live="polite"></section>
+  </main>
+
+  <footer class="footer">Karen Store V4</footer>
+
+  <!-- ورود -->
+  <dialog id="loginDialog" class="dialog">
+    <form id="loginForm" class="form" novalidate>
+      <div class="dialog-head">
+        <h2>ورود به حساب</h2>
+        <button type="button" class="icon-btn" data-close aria-label="بستن">✕</button>
+      </div>
+      <label>
+        <span>نام کاربری</span>
+        <input name="username" autocomplete="username" maxlength="32" required>
+      </label>
+      <label>
+        <span>رمز عبور</span>
+        <input name="password" type="password" autocomplete="current-password" maxlength="72" required>
+      </label>
+      <p id="loginMsg" class="form-msg" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">ورود</button>
+      <p class="switch-line">حساب نداری؟ <button type="button" id="switchToRegister" class="link-btn">ثبت‌نام کن</button></p>
+    </form>
+  </dialog>
+
+  <!-- ثبت‌نام -->
+  <dialog id="registerDialog" class="dialog">
+    <form id="registerForm" class="form" novalidate>
+      <div class="dialog-head">
+        <h2>ساخت حساب</h2>
+        <button type="button" class="icon-btn" data-close aria-label="بستن">✕</button>
+      </div>
+      <label>
+        <span>نام کاربری (۳ تا ۳۲ کاراکتر، حروف انگلیسی، عدد و _)</span>
+        <input name="username" autocomplete="username" maxlength="32" required>
+      </label>
+      <label>
+        <span>رمز عبور (حداقل ۶ کاراکتر)</span>
+        <input name="password" type="password" autocomplete="new-password" maxlength="72" required>
+      </label>
+      <label>
+        <span>تکرار رمز عبور</span>
+        <input name="confirm" type="password" autocomplete="new-password" maxlength="72" required>
+      </label>
+      <p id="registerMsg" class="form-msg" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">ساخت حساب</button>
+      <p class="switch-line">حساب داری؟ <button type="button" id="switchToLogin" class="link-btn">وارد شو</button></p>
+    </form>
+  </dialog>
+
+  <!-- آپلود بازی -->
+  <dialog id="uploadDialog" class="dialog dialog-wide">
+    <form id="uploadForm" class="form" novalidate>
+      <div class="dialog-head">
+        <h2>انتشار بازی</h2>
+        <button type="button" class="icon-btn" data-close aria-label="بستن">✕</button>
+      </div>
+      <div class="grid-two">
+        <label>
+          <span>نام بازی</span>
+          <input name="title" maxlength="120" required>
+        </label>
+        <label>
+          <span>نسخه</span>
+          <input name="version" maxlength="40" placeholder="مثلاً 1.0.0" required>
+        </label>
+        <label>
+          <span>دسته‌بندی</span>
+          <select name="category" id="gameCategory" required></select>
+        </label>
+        <label>
+          <span>نام سازنده</span>
+          <input name="developer" maxlength="80" required>
+        </label>
+      </div>
+      <label>
+        <span>توضیحات</span>
+        <textarea name="description" rows="4" maxlength="2000"></textarea>
+      </label>
+      <label>
+        <span>فایل بازی (حداکثر ۵۰۰ MB)</span>
+        <input name="game" id="gameFile" type="file" required
+          accept=".apk,.aab,.zip,.rar,.7z,.exe,.msi,.jar,.iso,.ka,.game,.html,.tar,.gz">
+        <small class="hint">پسوندهای مجاز: .apk .aab .zip .rar .7z .exe .msi .jar .iso .ka .game .html .tar .gz</small>
+      </label>
+      <progress id="uploadProgress" class="progress" max="1" value="0" hidden></progress>
+      <p id="uploadMsg" class="form-msg" hidden></p>
+      <button id="uploadSubmit" type="submit" class="btn btn-primary btn-block">انتشار</button>
+    </form>
+  </dialog>
+
+  <!-- جزئیات بازی -->
+  <dialog id="detailDialog" class="dialog dialog-wide">
+    <div class="dialog-head">
+      <h2>اطلاعات بازی</h2>
+      <button type="button" class="icon-btn" data-close aria-label="بستن">✕</button>
+    </div>
+    <div id="detailBody" class="detail-body"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
