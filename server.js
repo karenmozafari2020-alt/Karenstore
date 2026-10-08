@@ -62,54 +62,72 @@ const pool = new Pool({
 });
 pool.on('error', (err) => console.error('PostgreSQL pool error:', err.message));
 
-const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS users (
-  id SERIAL PRIMARY KEY,
-  username VARCHAR(32) NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username));
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS users (
+     id SERIAL PRIMARY KEY,
+     username VARCHAR(32) NOT NULL,
+     password_hash TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+     id SERIAL PRIMARY KEY,
+     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     token_hash VARCHAR(64) NOT NULL UNIQUE,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     expires_at TIMESTAMPTZ NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS games (
+     id SERIAL PRIMARY KEY,
+     title VARCHAR(120) NOT NULL,
+     description TEXT NOT NULL DEFAULT '',
+     version VARCHAR(40) NOT NULL,
+     category VARCHAR(40) NOT NULL,
+     developer VARCHAR(80) NOT NULL,
+     filename VARCHAR(255) NOT NULL,
+     stored_filename VARCHAR(255) NOT NULL,
+     storage_path VARCHAR(255) NOT NULL,
+     file_size BIGINT NOT NULL,
+     downloads INTEGER NOT NULL DEFAULT 0,
+     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   )`,
+  `CREATE INDEX IF NOT EXISTS games_user_id_idx ON games (user_id)`,
+  `CREATE INDEX IF NOT EXISTS games_created_at_idx ON games (created_at DESC)`,
+];
 
-CREATE TABLE IF NOT EXISTS sessions (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token_hash VARCHAR(64) NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ NOT NULL
-);
+// وضعیت ساخت جدول‌ها؛ در /api/health نمایش داده می‌شود تا علت خطا دیده شود.
+const schemaState = { ready: false, error: null, failedStatement: null };
+let schemaPromise = null;
 
-CREATE TABLE IF NOT EXISTS games (
-  id SERIAL PRIMARY KEY,
-  title VARCHAR(120) NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  version VARCHAR(40) NOT NULL,
-  category VARCHAR(40) NOT NULL,
-  developer VARCHAR(80) NOT NULL,
-  filename VARCHAR(255) NOT NULL,
-  stored_filename VARCHAR(255) NOT NULL,
-  storage_path VARCHAR(255) NOT NULL,
-  file_size BIGINT NOT NULL,
-  downloads INTEGER NOT NULL DEFAULT 0,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS games_user_id_idx ON games (user_id);
-CREATE INDEX IF NOT EXISTS games_created_at_idx ON games (created_at DESC);
-`;
-
-async function initDatabase() {
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      await pool.query(SCHEMA_SQL);
-      console.log('دیتابیس آماده است.');
-      return;
-    } catch (err) {
-      console.error(`ساخت جداول - تلاش ${attempt} ناموفق: ${err.message}`);
-      await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+function runSchema() {
+  return (async () => {
+    for (const statement of SCHEMA_STATEMENTS) {
+      try {
+        await pool.query(statement);
+      } catch (err) {
+        const name = statement.trim().split('(')[0].replace(/\s+/g, ' ').slice(0, 80);
+        schemaState.ready = false;
+        schemaState.error = { code: err.code || null, message: err.message };
+        schemaState.failedStatement = name;
+        console.error(`ساخت جدول ناموفق (${name}):`, err.code || '', err.message);
+        return false;
+      }
     }
+    schemaState.ready = true;
+    schemaState.error = null;
+    schemaState.failedStatement = null;
+    console.log('دیتابیس و جدول‌ها آماده‌اند.');
+    return true;
+  })();
+}
+
+function ensureSchema() {
+  if (schemaState.ready) return Promise.resolve(true);
+  if (!schemaPromise) {
+    schemaPromise = runSchema().finally(() => { schemaPromise = null; });
   }
-  console.error('ساخت جداول انجام نشد؛ /api/health وضعیت را نشان می‌دهد.');
+  return schemaPromise;
 }
 
 const DUMMY_HASH = bcrypt.hashSync('karen-store-dummy-password', BCRYPT_ROUNDS);
@@ -294,23 +312,26 @@ app.use((req, res, next) => {
 
 app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
 
+app.use('/api', async (req, res, next) => {
+  if (req.path === '/health') return next();
+  if (await ensureSchema()) return next();
+  return res.status(503).json({
+    error: 'دیتابیس هنوز آماده نیست. وضعیت را در /api/health بررسی کنید.',
+  });
+});
+
 /* ---------- Health ---------- */
 
 app.get('/api/health', async (req, res) => {
   let database = false;
-  let tables = false;
   try {
     await pool.query('SELECT 1');
     database = true;
-    const { rows } = await pool.query(
-      `SELECT to_regclass('public.users') IS NOT NULL
-          AND to_regclass('public.sessions') IS NOT NULL
-          AND to_regclass('public.games') IS NOT NULL AS ok`,
-    );
-    tables = rows[0].ok === true;
   } catch (err) {
     console.error('بررسی دیتابیس ناموفق:', err.message);
+    schemaState.error = { code: err.code || null, message: err.message };
   }
+  const tables = database ? await ensureSchema() : false;
   const storageInfo = storage.storageStatus();
   const ok = database && tables && storageInfo.configured;
   res.status(ok ? 200 : 503).json({
@@ -318,6 +339,8 @@ app.get('/api/health', async (req, res) => {
     database,
     tables,
     storage: storageInfo,
+    schemaError: tables ? null : schemaState.error,
+    failedStatement: tables ? null : schemaState.failedStatement,
   });
 });
 
@@ -555,7 +578,10 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Karen Store V4 روی http://${HOST}:${PORT} در حال اجراست.`);
 });
 
-initDatabase();
+ensureSchema();
+setInterval(() => {
+  if (!schemaState.ready) ensureSchema();
+}, 10000);
 
 function shutdown() {
   server.close(() => {
