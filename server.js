@@ -341,6 +341,7 @@ app.get('/api/health', async (req, res) => {
     database,
     tables,
     storage: storageInfo,
+    databaseUrlSet: Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim()),
     schemaError: tables ? null : schemaState.error,
     failedStatement: tables ? null : schemaState.failedStatement,
   });

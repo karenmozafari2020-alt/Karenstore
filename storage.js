@@ -9,8 +9,8 @@
  *   storageStatus()
  *
  * ارائه‌دهنده با متغیر STORAGE_PROVIDER انتخاب می‌شود:
- *   supabase (پیش‌فرض) -> Supabase Storage REST API
- *   s3                 -> هر Object Storage سازگار با S3 (مثل Backblaze B2)
+ *   s3 (پیش‌فرض)       -> هر Object Storage سازگار با S3 (مثل Backblaze B2)
+ *   supabase           -> Supabase Storage REST API (اختیاری)
  *
  * هیچ کلیدی داخل کد نیست؛ همه از Environment Variables خوانده می‌شود.
  */
@@ -19,7 +19,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const SUPPORTED_PROVIDERS = ['supabase', 's3'];
-const PROVIDER = (process.env.STORAGE_PROVIDER || 'supabase').trim().toLowerCase();
+const PROVIDER = (process.env.STORAGE_PROVIDER || 's3').trim().toLowerCase();
 
 class StorageError extends Error {
   constructor(message, status = 502) {
