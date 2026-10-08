@@ -17,9 +17,22 @@
 
 const fs = require('fs');
 const crypto = require('crypto');
+const { Readable } = require('stream');
 
-const SUPPORTED_PROVIDERS = ['supabase', 's3'];
-const PROVIDER = (process.env.STORAGE_PROVIDER || 's3').trim().toLowerCase();
+const path = require('path');
+
+const SUPPORTED_PROVIDERS = ['supabase', 's3', 'local'];
+const LOCAL_DIR = path.join(__dirname, 'uploads', 'storage');
+
+function hasAll(names) {
+  return names.every((n) => (process.env[n] || '').trim() !== '');
+}
+
+// اگر STORAGE_PROVIDER تنظیم نشده باشد، انتخاب خودکار:
+//   S3 کامل باشد -> s3 (دائمی)، وگرنه -> local (دیسک سرور؛ دائمی نیست)
+const PROVIDER = (process.env.STORAGE_PROVIDER || (
+  hasAll(['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) ? 's3' : 'local'
+)).trim().toLowerCase();
 
 class StorageError extends Error {
   constructor(message, status = 502) {
@@ -37,6 +50,41 @@ function misconfigured(detail, missing = []) {
 
 function missingVars(names) {
   return names.filter((n) => (process.env[n] || '').trim() === '');
+}
+
+/* ------------------------------------------------------------------ */
+/* Local disk (پشتیبان؛ دائمی نیست)                                     */
+/* ------------------------------------------------------------------ */
+
+function localFilePath(storagePath) {
+  const full = path.resolve(LOCAL_DIR, storagePath);
+  if (!full.startsWith(LOCAL_DIR + path.sep)) throw new StorageError('مسیر فایل نامعتبر است.', 400);
+  return full;
+}
+
+async function localUpload(localPath, storagePath) {
+  const target = localFilePath(storagePath);
+  await fs.promises.mkdir(path.dirname(target), { recursive: true });
+  await fs.promises.copyFile(localPath, target);
+}
+
+async function localGet(storagePath) {
+  const target = localFilePath(storagePath);
+  let stat;
+  try {
+    stat = await fs.promises.stat(target);
+  } catch (err) {
+    throw new StorageError('فایل این بازی در Storage پیدا نشد.', 404);
+  }
+  const body = Readable.toWeb(fs.createReadStream(target));
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-length': String(stat.size) },
+  });
+}
+
+async function localDelete(storagePath) {
+  await fs.promises.rm(localFilePath(storagePath), { force: true });
 }
 
 function activeProvider() {
@@ -242,7 +290,9 @@ async function s3Delete(storagePath) {
  * storagePath مثل: games/<uuid>.apk
  */
 async function uploadGameFile({ localPath, storagePath, size }) {
-  if (activeProvider() === 's3') return s3Upload(localPath, storagePath, size);
+  const provider = activeProvider();
+  if (provider === 's3') return s3Upload(localPath, storagePath, size);
+  if (provider === 'local') return localUpload(localPath, storagePath);
   return supabaseUpload(localPath, storagePath, size);
 }
 
@@ -251,7 +301,9 @@ async function uploadGameFile({ localPath, storagePath, size }) {
  * caller باید res.ok را بررسی نکند؛ خطاها به‌صورت StorageError پرتاب می‌شوند.
  */
 async function getGameFile(storagePath) {
-  if (activeProvider() === 's3') return s3Get(storagePath);
+  const provider = activeProvider();
+  if (provider === 's3') return s3Get(storagePath);
+  if (provider === 'local') return localGet(storagePath);
   const signedUrl = await supabaseSignedUrl(storagePath);
   const res = await fetch(signedUrl);
   if (res.status === 404) {
@@ -266,7 +318,9 @@ async function getGameFile(storagePath) {
  * حذف فایل از Storage. اگر فایل از قبل وجود نداشته باشد، موفق در نظر گرفته می‌شود.
  */
 async function deleteGameFile(storagePath) {
-  if (activeProvider() === 's3') return s3Delete(storagePath);
+  const provider = activeProvider();
+  if (provider === 's3') return s3Delete(storagePath);
+  if (provider === 'local') return localDelete(storagePath);
   return supabaseDelete(storagePath);
 }
 
@@ -274,12 +328,14 @@ async function deleteGameFile(storagePath) {
  * وضعیت پیکربندی Storage (بدون ارسال درخواست شبکه).
  */
 function storageStatus() {
+  if (PROVIDER === 'local') {
+    return { provider: 'local', configured: true, persistent: false };
+  }
   const required = PROVIDER === 's3'
     ? ['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']
     : ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
-  const configured = SUPPORTED_PROVIDERS.includes(PROVIDER)
-    && required.every((name) => (process.env[name] || '').trim() !== '');
-  return { provider: PROVIDER, configured };
+  const configured = SUPPORTED_PROVIDERS.includes(PROVIDER) && hasAll(required);
+  return { provider: PROVIDER, configured, persistent: configured };
 }
 
 module.exports = {
