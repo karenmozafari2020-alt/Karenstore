@@ -38,8 +38,22 @@ if (!process.env.DATABASE_URL) {
 /* PostgreSQL                                                          */
 /* ------------------------------------------------------------------ */
 
+// پارامتر sslmode را از رشته اتصال حذف می‌کنیم، چون در pg باعث نادیده گرفتن تنظیم ssl می‌شود
+// و گواهی Supabase/Render رد می‌شود. SSL همیشه از تنظیمات زیر خوانده می‌شود.
+function cleanConnectionString(raw) {
+  try {
+    const url = new URL(raw);
+    url.searchParams.delete('sslmode');
+    url.searchParams.delete('ssl');
+    url.searchParams.delete('uselibpqcompat');
+    return url.toString();
+  } catch (err) {
+    return raw;
+  }
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: cleanConnectionString(process.env.DATABASE_URL || ''),
   // Supabase و بیشتر سرویس‌های ابری SSL می‌خواهند. برای PostgreSQL محلی: DATABASE_SSL=false
   ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
   max: 5,
